@@ -1,0 +1,6 @@
+streamlit>=1.40
+pandas>=2.0
+numpy>=1.26
+matplotlib>=3.8
+pytrends>=4.9.2
+ddgs>=9.0

@@ -1,62 +1,30 @@
+# Brand Growth Diagnostic v1.1 — 多品牌通路情報測試版
 
-# Brand Growth Diagnostic — v0.3
+## 功能
+- 任意輸入品牌名稱（台灣、日本、新加坡、香港、馬來西亞、美國）
+- 多品牌測試：同一瀏覽器工作階段可切換已分析結果
+- 通路相關公開頁面及可點擊網址（每通路最多 3 個）
+- 候選競品與 Google Trends（可能受公開來源限制）
+- 商品價格線索（**不當作驗證價格**）
+- 可下載來源清單 CSV、通路證據 CSV、摘要 HTML
+- 明確標示資料缺口，不把搜尋命中當作實際上架
 
-## 目標
-真正做到：
-**輸入品牌名稱 → 自動抓公開訊號 → 自動找競品 → 產出診斷與建議**
-
-## v0.3 已完成
-- 單一品牌名稱輸入
-- 自動競品候選辨識
-- Google Trends 12 個月趨勢
-- Search Momentum
-- Share of Search
-- 通路公開訊號掃描
-- 商品 / 價格公開訊號
-- 行銷活動分類
-- Consumer Voice 關鍵字
-- Brand Growth Radar
-- Growth Hypothesis
-- Recommended Tests
-- 可下載 HTML 診斷報告
+## Streamlit Cloud 更新法（請先備份現有 app.py）
+1. GitHub 開原本 `polly770323/brand-growth-diagnostic`。
+2. 建議先用新分支 `v1.1-test`，不要直接覆蓋 `main`。在 GitHub 的分支下拉選單輸入分支名並建立。
+3. 在該分支 `Add file` → `Upload files`，上傳這個 ZIP **解壓縮後**的 `app.py`、`requirements.txt`、`README.md`，確認允許取代舊檔並提交。
+4. 打開 https://share.streamlit.io/ ，新增測試 app：Repository `polly770323/brand-growth-diagnostic`，Branch `v1.1-test`，Main file path `app.py`，App URL 取一個新名稱。
+5. 測試正常後再把分支合併到 `main`；舊版網站會依部署狀態更新。
 
 ## 本機執行
-```bash
-pip install -r requirements.txt
-streamlit run app.py
-```
+`pip install -r requirements.txt`
+`streamlit run app.py`
 
-## 部署成真正網址
-最簡單：Streamlit Community Cloud
-
-1. 建立 GitHub repository，例如 `brand-growth-diagnostic`
-2. 上傳本資料夾中的 `app.py` 與 `requirements.txt`
-3. 到 Streamlit Community Cloud
-4. New app → 選擇 repository → Main file 選 `app.py`
-5. Deploy
-6. 完成後會得到：
-   `https://xxxx.streamlit.app`
-
-## 為什麼目前仍稱 MVP
-部分公開來源沒有免費、穩定、合法的正式 API，因此 v0.3 使用公開搜尋訊號與 Google Trends 的非官方 Python 套件。
-結果適合：
-- 品牌初步診斷
-- 顧問研究起點
-- 競品假設
-- Proposal 前置研究
-
-不應直接當成：
-- 真實營收
-- 真實媒體花費
-- 真實通路 sell-through
-- 精準市場份額
-
-## 下一版 v0.4
-推薦加入：
-- 人工確認 / 修改競品
-- 類別 Benchmark Database
-- 品牌診斷專案儲存
-- 正式 Similarweb API
-- 可上傳內部營收 / 毛利 / CRM 資料
-- External Signal vs Internal Data 交叉診斷
-- PDF 顧問版型
+## 注意事項
+- 不使用 API Key；公開搜尋可能被限流，導致部分品牌結果不完整。
+- 對海外品牌的通路查詢仍以台灣網站為主；跨國平台覆蓋是待開發功能。
+- 此版通路資訊是搜尋證據，不保證供貨、庫存、成交或門市鋪貨。
+- Google Trends 是相對搜尋指數，不能代表銷售額。
+- 現階段只做搜尋摘要中的價格線索，尚未做 SKU 標準化和跨平台同品比價。
+- 分析結果只暫存於 Streamlit session，重新整理/伺服器重啟可能消失；尚未導入資料庫。
+- 公開儲存庫不可放密碼、私密資料、公司非公開資訊。

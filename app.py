@@ -13,11 +13,11 @@ st.set_page_config(page_title="Brand Growth Diagnostic", page_icon="📊", layou
 # ---------------------------
 # UI
 # ---------------------------
-st.title("Brand Growth Diagnostic")
-st.caption("輸入一個品牌名稱，自動整理公開訊號、競品、搜尋趨勢、通路、價格、口碑與成長假設。")
-st.info("這是一套『公開訊號決策輔助工具』，不把外部估算當成品牌內部真實營收或轉換資料。")
+st.title("Brand Growth Diagnostic · v1.1")
+st.caption("多品牌商業情報測試版｜公開來源・通路訊號・競品線索・可匯出資料")
+st.info("研究用途：搜尋結果不等於實際上架；從網頁摘要擷取的數字不等於驗證售價。所有結論需回到原始來源覆核。")
 
-brand = st.text_input("品牌名稱", placeholder="例如：雙月食品社")
+brand = st.text_input("品牌名稱", placeholder="例如：老協珍、瓦城、雙月食品社").strip()
 country = st.selectbox("主要市場", ["台灣", "日本", "新加坡", "香港", "馬來西亞", "美國"], index=0)
 run = st.button("開始品牌診斷", type="primary", disabled=not brand)
 
@@ -338,136 +338,158 @@ def build_html_report(brand, country, competitors, scores, growth, sos, hypothes
     </body></html>"""
 
 # ---------------------------
-# Main run
+# v1.1: record multiple brand runs in session memory
 # ---------------------------
+from datetime import datetime, timezone, timedelta
+
+if "diagnostic_records" not in st.session_state:
+    st.session_state.diagnostic_records = {}
+
+# Channels: signals only; never treat an unvalidated search hit as confirmed listing.
+def channel_evidence_v11(brand, country):
+    channels = {
+        "品牌官網": f'"{brand}" 官方 官網',
+        "蝦皮": f'site:shopee.tw "{brand}" 商品',
+        "momo": f'site:momoshop.com.tw "{brand}" 商品',
+        "PChome": f'site:pchome.com.tw "{brand}" 商品',
+        "家樂福線上": f'site:carrefour.com.tw "{brand}"',
+        "7-ELEVEN": f'"{brand}" 7-ELEVEN 商品',
+        "全家": f'"{brand}" 全家 便利商店 商品',
+        "Costco": f'"{brand}" Costco 台灣',
+        "百貨 / 商場": f'"{brand}" 百貨 專櫃',
+        "機場 / Travel Retail": f'"{brand}" 機場 免稅',
+    }
+    # Stronger topical filtering to reduce false-positive matched sites.
+    expected_domains = {
+        "蝦皮": ["shopee.tw"], "momo": ["momoshop.com.tw"],
+        "PChome": ["pchome.com.tw"], "家樂福線上": ["carrefour.com.tw"],
+        "Costco": ["costco.com.tw"],
+    }
+    result = []
+    for channel, query in channels.items():
+        hits, err = search_web(query, 6)
+        valid=[]
+        for h in hits:
+            combined = (h.get("title", "") + " " + h.get("body", "")).lower()
+            has_brand = brand.lower() in combined
+            domains = expected_domains.get(channel)
+            on_expected_site = (not domains) or any(d in hostname(h.get("href", "")) for d in domains)
+            if has_brand and on_expected_site and h.get("href", "").startswith("http"):
+                valid.append(h)
+        for h in valid[:3]:
+            result.append({"通路":channel,"搜尋狀態":"發現相關公開頁面（待覆核）", "標題":h["title"],"來源網址":h["href"],"摘要":h["body"][:200]})
+        if not valid:
+            result.append({"通路":channel,"搜尋狀態":"未找到可用證據" if not err else "搜尋發生錯誤", "標題":"","來源網址":"","摘要":(err or "")[:160]})
+    return pd.DataFrame(result)
+
 if run:
     geo=GEO[country]
-    progress=st.progress(0, text="建立品牌基本輪廓…")
-
+    progress=st.progress(0, text="搜尋品牌與公開資料…")
     general, general_err=search_web(f'"{brand}" 品牌 商品 {country}',12)
     official=likely_official_urls(general,brand)
-    progress.progress(12, text="自動尋找競品…")
-
+    progress.progress(15, text="尋找候選競品…")
     competitors, competitor_sources=discover_competitors(brand,country)
-    if not competitors:
-        st.warning("自動競品辨識不足，本次仍會完成單品牌診斷；之後可加入人工校正功能。")
-    progress.progress(24, text="讀取 Google Trends…")
-
+    progress.progress(28, text="讀取公開搜尋趨勢…")
     trend_keys=[brand]+competitors[:4]
     trend_df,trend_err=trends_data(trend_keys,geo)
     growth,sos,demand_score=trend_metrics(trend_df,brand,trend_keys)
-    progress.progress(40, text="掃描公開通路…")
-
-    channels=channel_check(brand,country)
-    channel_score=clamp(channels["Signal"].mean()*100 if len(channels) else 0)
-    progress.progress(55, text="整理商品與價格訊號…")
-
+    progress.progress(45, text="蒐集通路來源…")
+    evidence=channel_evidence_v11(brand,country)
+    signals=evidence.groupby("通路")["來源網址"].apply(lambda c:any(bool(x) for x in c)).to_dict()
+    # For compatibility with old report, do NOT interpret this as channel coverage.
+    channels=pd.DataFrame([{"Channel":k,"Signal":v,"Evidence":"需人工確認","URL":""} for k,v in signals.items()])
+    progress.progress(62, text="蒐集商品與市場訊號…")
     price_stats,price_evidence,product_results=product_price_signals(brand)
-    product_score=score_product(price_stats,product_results)
-    progress.progress(68, text="分析近期行銷活動…")
-
     marketing_counts,marketing_score,marketing_sources=marketing_signals(brand)
-    progress.progress(80, text="整理消費者口碑訊號…")
-
+    progress.progress(80, text="蒐集口碑訊號…")
     voice_score,pos_kw,neg_kw,voice_sources=consumer_voice(brand)
-    digital_score=score_digital(general,official)
-    progress.progress(92, text="建立成長假設與建議…")
-
-    scores={
-        "Demand":round(demand_score,1),
-        "Digital":round(digital_score,1),
-        "Marketing":round(marketing_score,1),
-        "Product":round(product_score,1),
-        "Channel":round(channel_score,1),
-        "Consumer Voice":round(voice_score,1),
-    }
+    scores={"Demand":round(demand_score,1),"Digital":round(score_digital(general,official),1),
+            "Marketing":round(marketing_score,1),"Product":round(score_product(price_stats,product_results),1),
+            "Consumer Voice":round(voice_score,1)}
     hypotheses,tests=diagnosis(scores,growth)
-
-    all_sources=[]
-    seen=set()
+    sources=[]; seen=set()
     for r in general+competitor_sources+marketing_sources+voice_sources+product_results:
-        if r["href"] and r["href"] not in seen:
-            seen.add(r["href"])
-            all_sources.append({"title":r["title"],"url":r["href"],"snippet":r["body"][:220]})
-    progress.progress(100, text="完成")
-    time.sleep(.2)
+        u=r.get("href","")
+        if u.startswith("http") and u not in seen:
+            seen.add(u); sources.append({"標題":r["title"],"來源網址":u,"摘要":r["body"][:220]})
+    for u in evidence["來源網址"].dropna().tolist():
+        if u and u not in seen:
+            seen.add(u); sources.append({"標題":"通路搜尋來源","來源網址":u,"摘要":""})
+    record={"brand":brand,"country":country,"time":datetime.now(timezone(timedelta(hours=8))).strftime("%Y-%m-%d %H:%M +08:00"),
+            "general_err":general_err,"trend_df":trend_df,"trend_err":trend_err,"growth":growth,"sos":sos,
+            "competitors":competitors,"evidence":evidence,"price_stats":price_stats,"price_evidence":price_evidence,
+            "marketing_counts":marketing_counts,"scores":scores,"hypotheses":hypotheses,"tests":tests,
+            "pos_kw":pos_kw,"neg_kw":neg_kw,"sources":sources,"channels":channels}
+    st.session_state.diagnostic_records[f"{brand}｜{country}"]=record
+    st.session_state.selected_diagnostic=f"{brand}｜{country}"
+    progress.progress(100, text="分析完成")
     progress.empty()
 
-    st.success(f"{brand} 診斷完成")
+records=st.session_state.diagnostic_records
+if records:
+    st.divider()
+    st.subheader("品牌情報工作台")
+    keys=list(records.keys())
+    selected=st.selectbox("選擇本次工作階段的品牌結果",keys,index=keys.index(st.session_state.get("selected_diagnostic",keys[-1])) if st.session_state.get("selected_diagnostic") in keys else len(keys)-1)
+    r=records[selected]
+    st.caption(f"分析時間：{r['time']}｜市場：{r['country']}｜同一工作階段已分析 {len(records)} 個品牌（伺服器重啟後不保留）")
+    status_count=r["evidence"].groupby("通路")["來源網址"].apply(lambda x:any(bool(u) for u in x)).sum()
+    m1,m2,m3=st.columns(3)
+    m1.metric("有相關網頁的通路類別",int(status_count))
+    m2.metric("蒐集到的引用來源",len(r["sources"]))
+    m3.metric("候選競品（未確認）",len(r["competitors"]))
+    st.caption("上述為本次搜尋樣本數量，不代表實際上架通路總數、銷售據點數或市場占有率。")
 
-    # Header metrics
-    c1,c2,c3,c4=st.columns(4)
-    c1.metric("Search Momentum", f"{growth:+.1f}%")
-    c2.metric("Share of Search", f"{sos:.1f}%")
-    c3.metric("Channel Coverage", f"{channel_score:.0f}%")
-    c4.metric("Consumer Voice", f"{voice_score:.0f}/100")
-
-    st.markdown("### 自動辨識競品")
-    st.write("、".join(competitors) if competitors else "本次未可靠辨識競品")
-
-    left,right=st.columns([1,1])
-    with left:
-        st.pyplot(radar(scores))
-    with right:
-        st.markdown("### Brand Growth Radar")
-        st.dataframe(pd.DataFrame({"Dimension":scores.keys(),"Score":scores.values()}),
-                     hide_index=True,use_container_width=True)
-
-    if trend_df is not None:
-        st.markdown("### Demand / Search Trend")
-        st.line_chart(trend_df)
-    elif trend_err:
-        st.info("Google Trends 暫時無法取得；其他模組仍可使用。")
-
-    st.markdown("### Growth Hypotheses")
-    for title,desc in hypotheses:
-        st.write(f"**{title}** — {desc}")
-
-    st.markdown("### Recommended Tests")
-    for x in tests:
-        st.write("• "+x)
-
-    tab1,tab2,tab3,tab4,tab5=st.tabs(["Channel","Product & Price","Marketing","Consumer Voice","Sources"])
-
-    with tab1:
-        show=channels.copy()
-        show["Signal"]=show["Signal"].map({True:"有公開訊號",False:"未找到明顯訊號"})
-        st.dataframe(show[["Channel","Signal","Evidence","URL"]],hide_index=True,use_container_width=True)
-
-    with tab2:
-        if price_stats:
-            p1,p2,p3=st.columns(3)
-            p1.metric("Detected Min", f"NT${price_stats['min']:,}")
-            p2.metric("Detected Median", f"NT${price_stats['median']:,}")
-            p3.metric("Detected Max", f"NT${price_stats['max']:,}")
-            st.caption("價格由公開搜尋片段自動抽取，可能含組合價、促銷價或非商品數字，應人工覆核。")
+    t1,t2,t3,t4,t5=st.tabs(["通路情報","競品與趨勢","商品價格線索","策略與口碑","來源與下載"])
+    with t1:
+        st.markdown("#### 通路搜尋證據")
+        st.dataframe(r["evidence"],hide_index=True,use_container_width=True,
+          column_config={"來源網址":st.column_config.LinkColumn("來源網址")})
+        st.caption("搜尋到頁面只表示有品牌相關內容，必須點入確認是否為該通路實際販售、是否仍有效。『未找到』不等於未上架。")
+        st.download_button("下載通路情報 CSV",r["evidence"].to_csv(index=False).encode("utf-8-sig"),
+                           file_name="channel_evidence.csv",mime="text/csv")
+    with t2:
+        st.markdown("#### 自動抽取的候選競品")
+        st.write("、".join(r["competitors"]) if r["competitors"] else "未找到足夠候選競品")
+        st.warning("候選競品是關鍵字抽取結果，可能包含非品牌詞，正式比較前必須人工覆核。")
+        if r["trend_df"] is not None:
+            st.line_chart(r["trend_df"])
+            st.caption("Google Trends 為相對搜尋熱度，不代表銷售額或絕對市場規模。")
         else:
-            st.write("本次未取得足夠價格樣本。")
-        if not price_evidence.empty:
-            st.dataframe(price_evidence,hide_index=True,use_container_width=True)
-
-    with tab3:
-        st.dataframe(pd.DataFrame({"Signal":marketing_counts.keys(),"Mentions":marketing_counts.values()}),
-                     hide_index=True,use_container_width=True)
-
-    with tab4:
-        pcols=[(k,v) for k,v in pos_kw.items() if v>0]
-        ncols=[(k,v) for k,v in neg_kw.items() if v>0]
-        st.write("**正向詞：** "+("、".join(f"{k}({v})" for k,v in pcols) if pcols else "未辨識"))
-        st.write("**負向詞：** "+("、".join(f"{k}({v})" for k,v in ncols) if ncols else "未辨識"))
-
-    with tab5:
-        st.dataframe(pd.DataFrame(all_sources[:30]),hide_index=True,use_container_width=True)
-
-    report=build_html_report(
-        brand,country,competitors,scores,growth,sos,hypotheses,tests,
-        channels,price_stats,marketing_counts,pos_kw,neg_kw,all_sources
-    )
-    st.download_button(
-        "下載品牌診斷報告（HTML）",
-        data=report,
-        file_name=f"{re.sub(r'[^A-Za-z0-9\u4e00-\u9fff]+','_',brand)}_brand_diagnostic.html",
-        mime="text/html"
-    )
-
-    st.caption("下一階段可加入：登入 / 專案儲存、品牌資料庫、人工校正競品、正式 Similarweb API、Meta/TikTok 合規資料接口、PDF 顧問版型。")
+            st.info("Google Trends 本次無法取得；不以缺失資料推估趨勢。")
+    with t3:
+        st.markdown("#### 商品與價格線索（非已驗證比價）")
+        st.warning("搜尋摘要中的數字可能是規格、數量、年份或活動價格。沒有 SKU 核對前，不提供跨通路價差結論。")
+        if not r["price_evidence"].empty:
+            st.dataframe(r["price_evidence"],hide_index=True,use_container_width=True,column_config={"URL":st.column_config.LinkColumn("URL")})
+        else:
+            st.info("本次沒有足夠價格線索。")
+    with t4:
+        st.markdown("#### 探索性策略假設")
+        for title,desc in r["hypotheses"]:
+            st.markdown(f"**{title}** — {desc}")
+        st.markdown("#### 建議驗證方式")
+        for t in r["tests"]:st.write("• "+t)
+        st.caption("所有建議都是待測試假設；需再補毛利、物流、消費者調查與通路條件。")
+        c1,c2=st.columns(2)
+        with c1:st.write("正向提及詞（搜尋樣本）：",r["pos_kw"])
+        with c2:st.write("負向提及詞（搜尋樣本）：",r["neg_kw"])
+    with t5:
+        st.markdown("#### 可追溯資料來源")
+        df=pd.DataFrame(r["sources"])
+        if not df.empty:st.dataframe(df,hide_index=True,use_container_width=True,column_config={"來源網址":st.column_config.LinkColumn("來源網址")})
+        else:st.warning("未取得來源。請檢查網路、搜尋限制或品牌關鍵字。")
+        st.download_button("下載來源清單 CSV",df.to_csv(index=False).encode("utf-8-sig"),file_name="sources.csv",mime="text/csv")
+        safe_name=re.sub(r'[^A-Za-z0-9\u4e00-\u9fff]+','_',r['brand'])
+        report=build_html_report(r["brand"],r["country"],r["competitors"],r["scores"],r["growth"],r["sos"],
+                   r["hypotheses"],r["tests"],r["channels"],{},r["marketing_counts"],r["pos_kw"],r["neg_kw"],
+                   [{"title":s["標題"],"url":s["來源網址"]} for s in r["sources"]])
+        st.download_button("下載診斷摘要 HTML",report,file_name=f"{safe_name}_diagnostic.html",mime="text/html")
+    if len(records)>1:
+        st.markdown("#### 本次多品牌對照（僅供搜尋覆蓋度比較）")
+        summary=[]
+        for x in records.values():
+            count=x["evidence"].groupby("通路")["來源網址"].apply(lambda y:any(bool(u) for u in y)).sum()
+            summary.append({"品牌":x["brand"],"市場":x["country"],"相關通路類別數":int(count),"引用來源數":len(x["sources"]),"候選競品數":len(x["competitors"])})
+        st.dataframe(pd.DataFrame(summary),hide_index=True,use_container_width=True)
+        st.caption("不同品牌有不同搜尋熱度與來源可見性，數字不能直接當作商業實力排名。")
